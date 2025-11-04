@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PDF阅读</title>
+  <style>
+    /* 去除页面边距和滚动条 */
+    body { margin: 0; padding: 0; overflow: hidden; }
+    /* 让PDF占满整个屏幕，隐藏默认控件 */
+    embed { 
+      width: 100vw; 
+      height: 100vh; 
+      border: none; 
+      /* 部分浏览器可通过此属性隐藏控件（兼容性有限） */
+      pdf-viewer-toolbar: none; 
+    }
+  </style>
+</head>
+<body>
+  <!-- 嵌入PDF，src替换为你的PDF文件名 -->
+  <embed src="./UI作品集-胡雨清-5年.pdf" type="application/pdf">
+</body>
+</html>
