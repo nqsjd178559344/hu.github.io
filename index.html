@@ -24,13 +24,14 @@
   <div id="pdfContainer"></div>
    <script>
    <!-- 禁用右键菜单 -->
-      document.addEventListener('contextmenu', e => e.preventDefault());
+      // document.addEventListener('contextmenu', e => e.preventDefault());
     // PDF 文件路径（必须与页面同域，如 GitHub Pages 中的相对路径）
     const pdfUrl = './UI作品集-胡雨清-5年.pdf';
 
     async function renderPdf() {
       try {
         const pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+        console.log(pdfDoc,'pdfDoc')
         const container = document.getElementById('pdfContainer');
 
         // 渲染所有页面
