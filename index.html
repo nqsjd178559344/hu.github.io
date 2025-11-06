@@ -42,6 +42,9 @@
         width: 100%;
         margin: 0 auto;
         overflow-x: hidden; /* 防止横向溢出 */
+        /* 新增：强制显示纵向滚动条，设置最小高度确保可滚动 */
+        overflow-y: scroll; /* 始终显示纵向滚动条（即使内容不足） */
+        min-height: 100vh; /* 容器最小高度为屏幕高度，确保至少有滚动区域 */
       }
 
       #loading {
@@ -70,18 +73,17 @@
       let totalPages = 0;
       let loadedPages = 0;
       let pageScale = 1;
-      let originalWidth = 0; // 原始宽度（scale=1时）
-      let originalHeight = 0; // 原始高度（scale=1时）
+      const pageSizes = []; // 存储每一页的原始宽高 [{width, height}, ...]
       const dpr = window.devicePixelRatio || 1;
-      const loadedPageNumbers = new Set(); // 记录已加载页码
-      let isRendering = false; // 渲染锁
+      const loadedPageNumbers = new Set();
+      let isRendering = false;
 
-      // 计算容器可用宽度（减去滚动条宽度）
+      // 计算容器可用宽度（扣除滚动条）
       function getContainerAvailableWidth() {
         const containerWidth = container.offsetWidth;
         const clientWidth = container.clientWidth;
-        const scrollbarWidth = containerWidth - clientWidth; // 滚动条宽度
-        return clientWidth - (scrollbarWidth > 0 ? scrollbarWidth : 0); // 可用宽度
+        const scrollbarWidth = containerWidth - clientWidth;
+        return clientWidth - (scrollbarWidth > 0 ? scrollbarWidth : 0);
       }
 
       // 防抖函数
@@ -93,47 +95,66 @@
         };
       }
 
-      // 初始化PDF
+      // 初始化PDF：先获取所有页宽高，再计算初始加载页数
       async function initPdf(url) {
         try {
+          loading.textContent = "获取PDF信息中...";
           const loadingTask = pdfjsLib.getDocument({
             url: url,
-            maxCanvasPixels: 4096 * 4096, // 支持高清渲染
+            maxCanvasPixels: 4096 * 4096,
           });
           pdfDoc = await loadingTask.promise;
           totalPages = pdfDoc.numPages;
-          loading.textContent = `共 ${totalPages} 页，加载中...`;
 
-          // 获取第一页原始宽高（关键：scale=1时的尺寸）
-          const firstPage = await pdfDoc.getPage(1);
-          const originalViewport = firstPage.getViewport({ scale: 1 });
-          originalWidth = originalViewport.width;
-          originalHeight = originalViewport.height;
+          // 获取所有页原始宽高
+          for (let i = 1; i <= totalPages; i++) {
+            const page = await pdfDoc.getPage(i);
+            const viewport = page.getViewport({ scale: 1 });
+            pageSizes.push({ width: viewport.width, height: viewport.height });
+          }
 
-          // 按原始比例计算缩放（以容器可用宽度为基准）
+          // 计算显示器可视高度
+          const screenHeight = window.innerHeight;
+          // 计算缩放比例
           const availableWidth = getContainerAvailableWidth();
-          pageScale = availableWidth / originalWidth;
+          pageScale = availableWidth / pageSizes[0].width;
 
-          // 首次加载前2页
-          await renderPages(1, 2);
+          // 计算初始加载页数（核心修改）
+          let totalHeight = 0;
+          let initialLoadPages = 0;
+          for (let i = 0; i < pageSizes.length; i++) {
+            const scaledHeight = pageSizes[i].height * pageScale;
+            totalHeight += scaledHeight;
+            initialLoadPages++;
+            // 当累加高度接近屏幕高度时，多加载1页
+            if (totalHeight >= screenHeight * 0.9) {
+              initialLoadPages++; // 强制多加载1页，确保超出屏幕
+              break;
+            }
+          }
+          // 确保不超过总页数，且至少加载1页
+          initialLoadPages = Math.max(
+            1,
+            Math.min(initialLoadPages, totalPages)
+          );
+
+          loading.textContent = `共 ${totalPages} 页，初始加载 ${initialLoadPages} 页...`;
+          await renderPages(1, initialLoadPages);
         } catch (err) {
           loading.textContent = `加载失败：${err.message}`;
         }
       }
-
       // 渲染指定页面
       async function renderPages(start, end) {
-        if (isRendering) return; // 防止并发渲染
+        if (isRendering) return;
         isRendering = true;
 
         end = Math.min(end, totalPages);
         try {
-          // 重新计算可用宽度和缩放比例（适配窗口变化）
           const availableWidth = getContainerAvailableWidth();
-          pageScale = availableWidth / originalWidth;
+          pageScale = availableWidth / pageSizes[0].width; // 重新计算缩放
 
           for (let num = start; num <= end; num++) {
-            // 跳过已加载页面
             if (loadedPageNumbers.has(num)) continue;
             const existingPage = container.querySelector(
               `[data-page-num="${num}"]`
@@ -143,20 +164,18 @@
               continue;
             }
 
-            // 加载单页并按原始比例渲染
+            // 按当前页原始尺寸渲染（支持不同页宽高）
             const page = await pdfDoc.getPage(num);
-            const scaledViewport = page.getViewport({ scale: pageScale * dpr }); // 含DPR的缩放
+            const scaledViewport = page.getViewport({ scale: pageScale * dpr });
 
-            // 创建Canvas
             const canvas = document.createElement("canvas");
             const context = canvas.getContext("2d");
 
-            // 设置Canvas尺寸（保证原始比例）
-            canvas.width = scaledViewport.width; // 实际像素尺寸（含DPR）
+            canvas.width = scaledViewport.width;
             canvas.height = scaledViewport.height;
-            canvas.style.width = `${scaledViewport.width / dpr}px`; // 显示尺寸
+            canvas.style.width = `${scaledViewport.width / dpr}px`;
             canvas.style.height = `${scaledViewport.height / dpr}px`;
-            canvas.style.maxWidth = `${availableWidth}px`; // 限制最大宽度
+            canvas.style.maxWidth = `${availableWidth}px`;
             canvas.style.display = "block";
             canvas.style.margin = "0 auto";
             canvas.style.padding = "0";
@@ -164,42 +183,59 @@
             canvas.dataset.pageNum = num;
             container.appendChild(canvas);
 
-            // 高清渲染配置
             context.imageSmoothingEnabled = true;
             context.imageSmoothingQuality = "high";
 
-            // 渲染页面
             const renderContext = {
               canvasContext: context,
               viewport: scaledViewport,
             };
             await page.render(renderContext).promise;
 
-            // 更新状态
             loadedPages = Math.max(loadedPages, num);
             loadedPageNumbers.add(num);
             loading.textContent = `已加载 ${loadedPages}/${totalPages} 页`;
+
+            if (loadedPages >= totalPages) {
+              loading.textContent = "加载完成";
+              setTimeout(() => (loading.style.display = "none"), 3000);
+            }
           }
         } catch (err) {
           console.error("渲染失败：", err);
         } finally {
-          isRendering = false; // 释放渲染锁
+          isRendering = false;
         }
       }
 
-      // 窗口大小变化时重新适配
+      // 窗口大小变化处理
       function handleResize() {
-        if (pdfDoc && originalWidth) {
-          // 清除已加载页面，重新渲染
+        if (pdfDoc && pageSizes.length) {
           Array.from(container.querySelectorAll("canvas")).forEach((canvas) => {
             container.removeChild(canvas);
           });
           loadedPageNumbers.clear();
           loadedPages = 0;
-          renderPages(1, 2);
+          // 重新计算初始加载页数
+          const screenHeight = window.innerHeight;
+          let totalHeight = 0;
+          let initialLoadPages = 0;
+          for (let i = 0; i < pageSizes.length; i++) {
+            const scaledHeight = pageSizes[i].height * pageScale;
+            totalHeight += scaledHeight;
+            initialLoadPages++;
+            if (totalHeight >= screenHeight * 0.9) {
+              initialLoadPages++; // 多加载1页
+              break;
+            }
+          }
+          initialLoadPages = Math.max(
+            1,
+            Math.min(initialLoadPages, totalPages)
+          );
+          renderPages(1, initialLoadPages);
         }
       }
-
       // 滚动加载
       const handleScroll = debounce(function () {
         if (loadedPages >= totalPages || isRendering) return;
@@ -212,13 +248,12 @@
         const lastPageBottom = lastPage.getBoundingClientRect().bottom;
         const viewportHeight = window.innerHeight;
 
-        // 距离底部500px时加载下一页
         if (lastPageBottom < viewportHeight + 500) {
+          // 每次滚动加载2页（可调整）
           renderPages(loadedPages + 1, loadedPages + 2);
         }
       });
 
-      // 事件监听
       window.addEventListener("scroll", handleScroll);
       window.addEventListener("resize", debounce(handleResize, 300));
 
